@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=no">
+  <title>ZIP Comic Reader</title>
+  <style>
+    :root {
+      --bg-color: #0a0f0d;
+      --ui-bg: rgba(14, 35, 28, 0.95);
+      --ui-border: rgba(46, 125, 50, 0.25);
+      --text-primary: #b9c4bf;
+      --text-secondary: #5d7a6e;
+      --accent: #2e7d32;
+      --accent-hover: #43a047;
+      --danger: #9a3434;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow: hidden;
+      height: 100dvh;
+      width: 100vw;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+    }
+
+    /* --- 加载界面 --- */
+    #loader-screen {
+      position: fixed; inset: 0;
+      background: var(--bg-color);
+      display: flex; flex-direction: column;
+      justify-content: center; align-items: center;
+      z-index: 2000;
+      transition: opacity 0.3s;
+    }
+    #loader-screen.hidden { opacity: 0; pointer-events: none; }
+    .upload-box {
+      border: 2px dashed var(--text-secondary);
+      padding: 50px 60px;
+      border-radius: 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+    .upload-box:hover { border-color: var(--accent); background: rgba(46, 125, 50, 0.05); }
+    input[type="file"] { display: none; }
+
+    .icon-folder {
+      width: 64px; height: 64px;
+      stroke: var(--text-secondary);
+      stroke-width: 1.5;
+      fill: none;
+    }
+    .upload-box:hover .icon-folder { stroke: var(--accent); }
+
+    h2 { font-weight: 300; letter-spacing: 1px; font-size: 1.2rem; }
+    .hint { color: var(--text-secondary); font-size: 0.85rem; }
+
+    /* --- 阅读器主体 --- */
+    #app { flex: 1; position: relative; overflow: hidden; display: none; }
+    #app.active { display: block; }
+
+    #viewer {
+      width: 100%; height: 100%;
+      display: flex; justify-content: center; align-items: center;
+      background: #000;
+      overflow: hidden;
+      touch-action: none;
+    }
+    #comic-img {
+      max-width: 100%; max-height: 100%;
+      transition: none;
+      transform-origin: center center;
+      will-change: transform;
+      display: block;
+    }
+    #comic-img.smooth { transition: transform 0.2s ease-out; }
+
+    /* --- UI 控件 --- */
+    #top-bar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+      z-index: 20;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    #top-bar.visible { opacity: 1; pointer-events: auto; }
+
+    .action-btn {
+      background: var(--ui-bg);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--ui-border);
+      color: var(--text-primary);
+      padding: 10px 24px;
+      border-radius: 50px;
+      font-size: 0.95rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .action-btn:active { transform: scale(0.95); background: var(--accent); }
+
+    /* 底部控制面板 */
+    #control-panel {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      background: var(--ui-bg);
+      backdrop-filter: blur(20px);
+      border-top: 1px solid var(--ui-border);
+      padding: 15px 20px;
+      padding-bottom: calc(15px + env(safe-area-inset-bottom, 0px));
+      z-index: 50;
+      transform: translateY(100%);
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    #control-panel.open { transform: translateY(0); }
+
+    /* 新布局：行1显示页码，行2显示进度条和按钮 */
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .page-info-large {
+      font-size: 1.1rem;
+      font-weight: 500;
+      color: var(--text-primary);
+      font-family: monospace;
+      letter-spacing: 1px;
+    }
+
+    .toggle-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .panel-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    input[type="range"] {
+      flex: 1;
+      height: 4px;
+      background: #1b3a2d;
+      border-radius: 2px;
+      outline: none;
+      -webkit-appearance: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px; height: 18px;
+      background: var(--accent);
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: 0 0 5px rgba(0,0,0,0.5);
+    }
+
+    .ctrl-btn {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--ui-border);
+      color: var(--text-primary);
+      padding: 8px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .ctrl-btn:active { background: var(--accent); border-color: var(--accent); }
+    .ctrl-btn.danger { border-color: var(--danger); color: #d68b8b; }
+    .ctrl-btn.danger:active { background: var(--danger); color: white; }
+
+    .switch {
+      position: relative; width: 40px; height: 22px;
+      background: #1b3a2d; border-radius: 11px;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .switch.on { background: var(--accent); }
+    .switch::after {
+      content: ''; position: absolute;
+      top: 2px; left: 2px;
+      width: 18px; height: 18px;
+      background: var(--text-primary); border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .switch.on::after { transform: translateX(18px); }
+
+    /* 加载遮罩 */
+    #loading-overlay {
+      position: absolute; inset: 0;
+      background: rgba(10, 15, 13, 0.95);
+      display: flex; justify-content: center; align-items: center;
+      z-index: 100; opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    #loading-overlay.active { opacity: 1; }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid #1b3a2d;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #toast {
+      position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
+      background: var(--ui-bg); border: 1px solid var(--ui-border);
+      padding: 10px 20px; border-radius: 30px;
+      font-size: 0.9rem; opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 200;
+      color: var(--text-primary);
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+  <div id="loader-screen">
+    <label class="upload-box">
+      <input type="file" id="file-input" accept=".zip,.cbz">
+      <svg class="icon-folder" viewBox="0 0 24 24">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+      </svg>
+      <h2>选择 ZIP 漫画文件</h2>
+      <div class="hint">支持拖拽文件到窗口</div>
+    </label>
+  </div>
+
+  <div id="app">
+    <div id="viewer">
+      <img id="comic-img" src="" alt="comic">
+    </div>
+
+    <div id="top-bar">
+      <button class="action-btn" onclick="resetView()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="1 4 1 10 7 10"></polyline>
+          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+        </svg>
+        重置视图
+      </button>
+    </div>
+
+    <div id="loading-overlay"><div class="spinner"></div></div>
+    <div id="toast"></div>
+
+    <div id="control-panel">
+      <!-- 行1：页码优先 + 开关 -->
+      <div class="panel-header">
+        <div class="page-info-large"><span id="curr-p">0</span> / <span id="total-p">0</span></div>
+        <div class="toggle-group">
+          <span>侧边翻页</span>
+          <div id="toggle-nav" class="switch" onclick="toggleNavZones()"></div>
+        </div>
+      </div>
+
+      <!-- 行2：进度条 + 按钮 -->
+      <div class="panel-controls">
+        <button class="ctrl-btn" onclick="prevPage()">◀</button>
+        <input type="range" id="progress-slider" min="0" value="0">
+        <button class="ctrl-btn" onclick="nextPage()">▶</button>
+        <button class="ctrl-btn danger" onclick="resetApp()">重置</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.0/umd/index.js"></script>
+  <script>
+    // --- 状态管理 ---
+    const state = {
+      files: [], zipData: null, index: 0,
+      cache: new Map(), cacheLimit: 5,
+
+      // 视图状态
+      scale: 1, panX: 0, panY: 0,
+
+      // UI状态
+      menuOpen: false, navZonesEnabled: false,
+
+
+      // idle -> single -> idle
+      //  |        |
+      //  |        +-> swipe -> idle
+      //  |        |
+      //  |        +-> drag -> idle
+      //  |
+      //  +-> pinch -> idle
+
+      // 手势状态机: idle, single, swipe, drag, pinch
+      gesture: 'idle',
+      startTouch: {x:0, y:0},
+      lastTouch: {x:0, y:0},
+      startDist: 0, startScale: 1,
+
+      // 点击判定
+      tapThreshold: 10,
+      lastTapTime: 0
+    };
+
+    // --- DOM 引用 ---
+    const dom = {
+      app: document.getElementById('app'),
+      img: document.getElementById('comic-img'),
+      viewer: document.getElementById('viewer'),
+      loader: document.getElementById('loader-screen'),
+      fileInput: document.getElementById('file-input'),
+      panel: document.getElementById('control-panel'),
+      topBar: document.getElementById('top-bar'),
+      toggleNav: document.getElementById('toggle-nav'),
+      progress: document.getElementById('progress-slider'),
+      currP: document.getElementById('curr-p'),
+      totalP: document.getElementById('total-p'),
+      loading: document.getElementById('loading-overlay'),
+      toast: document.getElementById('toast')
+    };
+
+    // --- 初始化 ---
+    dom.fileInput.onchange = e => handleFile(e.target.files[0]);
+    document.ondragover = e => e.preventDefault();
+    document.ondrop = e => {
+      e.preventDefault();
+      if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    };
+
+    // --- 事件监听 ---
+    document.onkeydown = e => {
+      if (!state.zipData) return;
+      switch(e.key) {
+        case 'ArrowLeft': prevPage(); break;
+        case 'ArrowRight': nextPage(); break;
+        case 'ArrowUp': adjustZoom(0.2); break;
+        case 'ArrowDown': adjustZoom(-0.2); break;
+        case 'Escape': if(state.menuOpen) toggleMenu(); break;
+      }
+    };
+
+    // 统一的事件入口
+    dom.viewer.addEventListener('touchstart', onTouchStart, { passive: false });
+    dom.viewer.addEventListener('touchmove', onTouchMove, { passive: false });
+    dom.viewer.addEventListener('touchend', onTouchEnd, { passive: false });
+    dom.viewer.addEventListener('mousedown', onMouseDown);
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    dom.viewer.addEventListener('wheel', onWheel, { passive: false });
+
+    // --- 手势逻辑修复 ---
+
+    function getDist(t1, t2) {
+      return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+    }
+
+    function onTouchStart(e) {
+      e.preventDefault();
+
+      if (e.touches.length === 1) {
+        state.gesture = 'single';
+        state.startTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        state.lastTouch = { ...state.startTouch };
+        dom.img.classList.remove('smooth');
+      }
+      else if (e.touches.length === 2) {
+        state.gesture = 'pinch';
+        state.startDist = getDist(e.touches[0], e.touches[1]);
+        state.startScale = state.scale;
+      }
+    }
+
+    function onTouchMove(e) {
+      e.preventDefault();
+
+      // === 核心修复：处理单指拖动 ===
+      if (e.touches.length === 1) {
+        // 只有 single 或 drag 状态才处理
+        if (state.gesture === 'single' || state.gesture === 'drag') {
+          const dx = e.touches[0].clientX - state.lastTouch.x;
+          const dy = e.touches[0].clientY - state.lastTouch.y;
+          const totalDist = Math.hypot(
+            e.touches[0].clientX - state.startTouch.x,
+            e.touches[0].clientY - state.startTouch.y
+          );
+
+          // 状态流转：single -> swipe 或 single -> drag
+          if (state.gesture === 'single' && totalDist > state.tapThreshold) {
+            if (state.scale === 1 && Math.abs(e.touches[0].clientX - state.startTouch.x) > state.tapThreshold) {
+              if (e.touches[0].clientX < state.startTouch.x) {
+                nextPage();
+              } else {
+                prevPage();
+              }
+              state.gesture = 'swipe';
+            } else {
+              state.gesture = 'drag';
+            }
+          }
+
+          // 执行移动：只有在 drag 状态下才移动
+          if (state.gesture === 'drag' && state.scale > 1) {
+            state.panX += dx;
+            state.panY += dy;
+            applyTransform();
+          }
+
+          state.lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }
+      }
+      else if (e.touches.length === 2 && state.gesture === 'pinch') {
+        const currDist = getDist(e.touches[0], e.touches[1]);
+        let newScale = state.startScale * (currDist / state.startDist);
+        newScale = Math.max(1, Math.min(5, newScale));
+        state.scale = newScale;
+        applyTransform();
+      }
+    }
+
+    function onTouchEnd(e) {
+      // 处理点击/双击
+      if (state.gesture === 'single') {
+        const now = Date.now();
+        const x = e.changedTouches[0].clientX;
+        const y = e.changedTouches[0].clientY;
+        const w = window.innerWidth;
+
+        // 检查是否在两侧翻页区
+        const isInNavZone = state.navZonesEnabled && (x < w * 0.25 || x > w * 0.75);
+
+        // === 核心修复：限制双击全屏仅在中间区域 ===
+        // 只有在中间区域才判定双击全屏
+        if (!isInNavZone) {
+          if (now - state.lastTapTime < 300) {
+            toggleFullscreen();
+            state.lastTapTime = 0;
+            state.gesture = 'idle';
+            return;
+          }
+        }
+
+        // 记录点击时间
+        state.lastTapTime = now;
+
+        // 处理单击逻辑
+        handleTap(x, y);
+      }
+
+      // 结束时进行边界修正
+      if (state.gesture === 'drag' || state.gesture === 'pinch') {
+        dom.img.classList.add('smooth');
+        applyTransform();
+      }
+
+      state.gesture = 'idle';
+    }
+
+    // 鼠标逻辑 (PC)
+    function onMouseDown(e) {
+      if (e.button !== 0) return;
+      state.gesture = 'single';
+      state.startTouch = { x: e.clientX, y: e.clientY };
+      state.lastTouch = { ...state.startTouch };
+      dom.img.classList.remove('smooth');
+      e.preventDefault();
+    }
+
+    function onMouseMove(e) {
+      if (state.gesture === 'idle') return;
+
+      // PC端：按住即视为拖动（若放大状态）
+      if (state.scale > 1) {
+        state.gesture = 'drag';
+        const dx = e.clientX - state.lastTouch.x;
+        const dy = e.clientY - state.lastTouch.y;
+        state.panX += dx;
+        state.panY += dy;
+        applyTransform();
+      } else {
+        // 未放大时，鼠标拖动不生效
+        state.gesture = 'single';
+      }
+
+      state.lastTouch = { x: e.clientX, y: e.clientY };
+    }
+
+    function onMouseUp(e) {
+      if (state.gesture === 'single') {
+        const dist = Math.hypot(e.clientX - state.startTouch.x, e.clientY - state.startTouch.y);
+        if (dist < state.tapThreshold) {
+          const now = Date.now();
+          const w = window.innerWidth;
+          const isInNavZone = state.navZonesEnabled && (e.clientX < w * 0.25 || e.clientX > w * 0.75);
+
+          if (!isInNavZone) {
+            if (now - state.lastTapTime < 300) {
+              toggleFullscreen();
+              state.lastTapTime = 0;
+              state.gesture = 'idle';
+              return;
+            }
+            state.lastTapTime = now;
+          }
+          handleTap(e.clientX, e.clientY);
+        }
+      }
+
+      if (state.gesture === 'drag') {
+        dom.img.classList.add('smooth');
+        applyTransform();
+      }
+      state.gesture = 'idle';
+    }
+
+    function onWheel(e) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.15 : 0.15;
+      adjustZoom(delta);
+    }
+
+    // --- 交互逻辑处理 ---
+
+    function handleTap(x, y) {
+      if (document.elementFromPoint(x, y).closest('#control-panel, #top-bar')) return;
+
+      const w = window.innerWidth;
+
+      // 判定区域
+      if (state.navZonesEnabled) {
+        if (x < w * 0.25) {
+          prevPage();
+          return;
+        }
+        if (x > w * 0.75) {
+          nextPage();
+          return;
+        }
+      }
+
+      toggleMenu();
+    }
+
+    // --- 核心功能 ---
+
+    function handleFile(file) {
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = evt => {
+        try {
+          state.zipData = new Uint8Array(evt.target.result);
+          parseZip();
+          dom.loader.classList.add('hidden');
+          dom.app.classList.add('active');
+          jumpTo(0);
+        } catch(err) {
+          alert("文件解析失败: " + err);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function parseZip() {
+      const list = [];
+      fflate.unzipSync(state.zipData, { filter: (file) => { list.push(file.name); return false; } });
+
+      const imgExts = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+      state.files = list.filter(name => {
+        const base = name.split('/').pop();
+        if (base.startsWith('.') || base.startsWith('@')) return false;
+        const ext = name.split('.').pop().toLowerCase();
+        return imgExts.includes(ext);
+      }).sort((a, b) => a.localeCompare(b, navigator.language, {numeric: true}));
+
+      dom.totalP.innerText = state.files.length;
+      dom.progress.max = state.files.length - 1;
+    }
+
+    function jumpTo(idx) {
+      if (idx < 0 || idx >= state.files.length) return;
+      state.index = idx;
+
+      dom.currP.innerText = idx + 1;
+      dom.progress.value = idx;
+
+      renderImage(idx);
+      updateCache();
+    }
+
+    function prevPage() { if(state.index > 0) jumpTo(state.index - 1); else showToast('已是第一页'); }
+    function nextPage() { if(state.index < state.files.length - 1) jumpTo(state.index + 1); else showToast('已是最后一页'); }
+
+    function renderImage(idx) {
+      showLoading(true);
+      const url = getCached(idx);
+      if(url) {
+        setImgSrc(url);
+      } else {
+        const newUrl = decompress(idx);
+        if(newUrl) setImgSrc(newUrl);
+        else { showLoading(false); showToast('解压失败'); }
+      }
+    }
+
+    function setImgSrc(url) {
+      dom.img.src = url;
+      dom.img.onload = () => {
+        showLoading(false);
+        resetView();
+      };
+      dom.img.onerror = () => showLoading(false);
+    }
+
+    function decompress(idx) {
+      const name = state.files[idx];
+      if(!name) return null;
+      try {
+        const res = fflate.unzipSync(state.zipData, { filter: f => f.name === name });
+        const data = res[name];
+        if(data) {
+          const blob = new Blob([data]);
+          const url = URL.createObjectURL(blob);
+          addCache(idx, url);
+          return url;
+        }
+      } catch(e) { console.error(e); }
+      return null;
+    }
+
+    function getCached(idx) { return state.cache.get(idx); }
+    function addCache(idx, url) { state.cache.set(idx, url); }
+
+    function updateCache() {
+      const min = state.index - state.cacheLimit;
+      const max = state.index + state.cacheLimit;
+      for(let key of state.cache.keys()) {
+        if(key < min || key > max) {
+          URL.revokeObjectURL(state.cache.get(key));
+          state.cache.delete(key);
+        }
+      }
+      setTimeout(() => {
+        for(let i=1; i<=state.cacheLimit; i++) {
+          if(state.index + i < state.files.length && !state.cache.has(state.index + i)) decompress(state.index + i);
+          if(state.index - i >= 0 && !state.cache.has(state.index - i)) decompress(state.index - i);
+        }
+      }, 200);
+    }
+
+    // --- UI & 视图控制 ---
+
+    function toggleMenu() {
+      state.menuOpen = !state.menuOpen;
+      dom.panel.classList.toggle('open', state.menuOpen);
+    }
+
+    function toggleNavZones() {
+      state.navZonesEnabled = !state.navZonesEnabled;
+      dom.toggleNav.classList.toggle('on', state.navZonesEnabled);
+    }
+
+    // 修改点：全屏切换时重置视图
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        if (state.scale !== 1) {
+          setTimeout(resetView, 100);
+          return;
+        }
+        document.documentElement.requestFullscreen();
+      } else {
+        if (state.scale !== 1) {
+          setTimeout(resetView, 100);
+          return;
+        }
+        document.exitFullscreen();
+      }
+    }
+
+    function setZoom(val) {
+      state.scale = Math.max(1, Math.min(5, val));
+      applyTransform();
+      updateTopBar();
+    }
+
+    function adjustZoom(delta) {
+      dom.img.classList.add('smooth');
+      setZoom(state.scale + delta);
+    }
+
+    function resetView() {
+      state.scale = 1;
+      state.panX = 0;
+      state.panY = 0;
+      dom.img.classList.add('smooth');
+      applyTransform();
+      updateTopBar();
+    }
+
+    function applyTransform() {
+      let px = state.panX;
+      let py = state.panY;
+
+      const imgW = dom.img.clientWidth * state.scale;
+      const imgH = dom.img.clientHeight * state.scale;
+      const viewW = dom.viewer.clientWidth;
+      const viewH = dom.viewer.clientHeight;
+
+      if (imgW <= viewW) px = 0;
+      else {
+        const maxPanX = (imgW - viewW) / 2;
+        px = Math.max(-maxPanX, Math.min(maxPanX, px));
+      }
+
+      if (imgH <= viewH) py = 0;
+      else {
+        const maxPanY = (imgH - viewH) / 2;
+        py = Math.max(-maxPanY, Math.min(maxPanY, py));
+      }
+
+      state.panX = px;
+      state.panY = py;
+
+      dom.img.style.transform = `translate(${px}px, ${py}px) scale(${state.scale})`;
+    }
+
+    function updateTopBar() {
+      const isModified = state.scale !== 1 || state.panX !== 0 || state.panY !== 0;
+      dom.topBar.classList.toggle('visible', isModified);
+    }
+
+    function resetApp() { location.reload(); }
+
+    function showLoading(isShow) { dom.loading.classList.toggle('active', isShow); }
+    function showToast(msg) {
+      dom.toast.innerText = msg;
+      dom.toast.classList.add('show');
+      setTimeout(() => dom.toast.classList.remove('show'), 1500);
+    }
+
+    dom.progress.oninput = e => jumpTo(parseInt(e.target.value));
+
+  </script>
+</body>
+</html>
