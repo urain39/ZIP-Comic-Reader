@@ -585,7 +585,7 @@
       const list = [];
       fflate.unzipSync(state.zipData, { filter: (file) => { list.push(file.name); return false; } });
 
-      const imgExts = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+      const imgExts = ['avif', 'heic', 'heif', 'jpg', 'jpeg', 'png', 'webp', 'gif'];
       state.files = list.filter(name => {
         const base = name.split('/').pop();
         if (base.startsWith('.') || base.startsWith('@')) return false;
