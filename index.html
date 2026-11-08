@@ -314,9 +314,12 @@
 
       // 手势状态机: idle, single, swipe, drag, pinch
       gesture: 'idle',
-      startTouch: {x:0, y:0},
-      lastTouch: {x:0, y:0},
+      startTouch: {x: 0, y: 0},
+      lastTouch: {x: 0, y: 0},
       startDist: 0, startScale: 1,
+      startMid: { x: 0, y: 0 },
+      startPanX: 0,
+      startPanY: 0,
 
       // 点击判定
       tapThreshold: 10,
@@ -389,6 +392,12 @@
         state.gesture = 'pinch';
         state.startDist = getDist(e.touches[0], e.touches[1]);
         state.startScale = state.scale;
+        state.startMid = {
+          x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+          y: (e.touches[0].clientY + e.touches[1].clientY) / 2
+        };
+        state.startPanX = state.panX;
+        state.startPanY = state.panY;
       }
     }
 
@@ -432,9 +441,24 @@
       }
       else if (e.touches.length === 2 && state.gesture === 'pinch') {
         const currDist = getDist(e.touches[0], e.touches[1]);
+        const mid = {
+          x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+          y: (e.touches[0].clientY + e.touches[1].clientY) / 2
+        };
         let newScale = state.startScale * (currDist / state.startDist);
         newScale = Math.max(1, Math.min(5, newScale));
+
+        // 起始中点相对视口中心的坐标
+        const rect = dom.viewer.getBoundingClientRect();
+        const ax = state.startMid.x - rect.left - rect.width / 2;
+        const ay = state.startMid.y - rect.top - rect.height / 2;
+        const ratio = newScale / state.startScale;
+
+        // 以起始中点缩放 + 叠加双指整体位移（每帧都从 startPan 重算，无累积误差）
+        state.panX = ax * (1 - ratio) + state.startPanX * ratio + (mid.x - state.startMid.x);
+        state.panY = ay * (1 - ratio) + state.startPanY * ratio + (mid.y - state.startMid.y);
         state.scale = newScale;
+
         applyTransform();
       }
     }
@@ -472,6 +496,7 @@
       if (state.gesture === 'drag' || state.gesture === 'pinch') {
         dom.img.classList.add('smooth');
         applyTransform();
+        updateTopBar();   // ← 新增
       }
 
       state.gesture = 'idle';
@@ -536,8 +561,11 @@
 
     function onWheel(e) {
       e.preventDefault();
-      const delta = e.deltaY > 0 ? -0.15 : 0.15;
-      adjustZoom(delta);
+      const rect = dom.viewer.getBoundingClientRect();
+      const ax = e.clientX - rect.left - rect.width / 2;
+      const ay = e.clientY - rect.top - rect.height / 2;
+      dom.img.classList.add('smooth');
+      setZoom(state.scale + (e.deltaY > 0 ? -0.15 : 0.15), ax, ay);
     }
 
     // --- 交互逻辑处理 ---
@@ -697,8 +725,15 @@
       }
     }
 
-    function setZoom(val) {
-      state.scale = Math.max(1, Math.min(5, val));
+    function setZoom(val, ax = 0, ay = 0) {
+      const newScale = Math.max(1, Math.min(5, val));
+      if (newScale === state.scale) return;
+
+      const ratio = newScale / state.scale;
+      state.panX = ax * (1 - ratio) + state.panX * ratio;
+      state.panY = ay * (1 - ratio) + state.panY * ratio;
+      state.scale = newScale;
+
       applyTransform();
       updateTopBar();
     }
